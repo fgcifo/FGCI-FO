@@ -19,13 +19,19 @@ img,svg{max-width:100%;}
 /* ---- testata: emblema (fgci.png) al fianco dell'intestazione ---- */
 .testata{background:linear-gradient(180deg,var(--rosso-700) 0%,var(--rosso-800) 100%);color:#fbeaec;padding:22px 0 24px;}
 .testata__riga{display:flex;align-items:center;gap:20px;}
-.testata__emblema{flex:none;width:76px;height:76px;display:flex;align-items:center;justify-content:center;}
+.testata__emblema{flex:none;width:84px;height:84px;padding:7px;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:16px;box-shadow:0 2px 8px rgba(46,6,11,.35);}
 .testata__emblema img{max-width:100%;max-height:100%;object-fit:contain;display:block;}
 .testata__testi{min-width:0;}
 .testata__nome{font-family:var(--font-chrome);font-weight:700;font-size:1.7rem;margin:0;letter-spacing:.01em;}
 .testata__nome a{color:#fff;text-decoration:none;}
 .testata__motto{font-style:italic;color:#f3c9cd;margin:4px 0 0;font-size:.97rem;}
 .fascia-rossa{height:5px;background:var(--rosso-950);}
+/* tricolore tra intestazione e menu */
+.fascia-tricolore{display:flex;height:10px;}
+.fascia-tricolore span{flex:1 1 0;}
+.fascia-tricolore .banda-1{background:#6E0001;}
+.fascia-tricolore .banda-2{background:#000;}
+.fascia-tricolore .banda-3{background:#ce5f14;}
 
 .nav-principale{background:#fff;border-bottom:3px solid var(--rosso-700);position:sticky;top:0;z-index:100;box-shadow:var(--ombra);}
 .nav-principale ul{list-style:none;display:flex;flex-wrap:wrap;gap:2px;margin:0;padding:0;}
@@ -173,11 +179,11 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--rosso-600);outli
   .ut-pagina{grid-template-columns:1fr;} .ut-colonna-indice{position:static;}
   .ut-lettura{padding:24px 20px;font-size:1.06rem;} .ut-testata-testo{padding:22px 20px;}
   .ut-scheda{flex-direction:column;} .ut-scheda__immagine{width:100%;height:160px;}
-  .hero{padding:28px 20px;} .testata__emblema{width:56px;height:56px;} .testata__nome{font-size:1.35rem;}
+  .hero{padding:28px 20px;} .testata__emblema{width:62px;height:62px;padding:5px;border-radius:12px;} .testata__nome{font-size:1.35rem;}
 }
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;}}
 @media print{
-  .nav-principale,.ut-azioni,.ut-colonna-indice,.breadcrumb,#footer-root,.fascia-rossa{display:none!important;}
+  .nav-principale,.ut-azioni,.ut-colonna-indice,.breadcrumb,#footer-root,.fascia-rossa,.fascia-tricolore{display:none!important;}
   body{background:#fff;} .testata{background:#fff;color:#000;padding:0 0 10px;border-bottom:2px solid var(--rosso-700);} .testata__nome a,.testata__motto{color:#000;}
   .ut-pagina{display:block;} .ut-lettura,.ut-testata-testo{border:none;box-shadow:none;padding:0;} .ut-cap{break-after:avoid;} .ut-tabella,.ut-riquadro{break-inside:avoid;}
 }
