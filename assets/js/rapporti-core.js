@@ -142,7 +142,7 @@ const Rapporti = (function () {
           </div>
         </div>
       </header>
-      <div class="fascia-rossa" role="presentation"></div>
+      <div class="fascia-tricolore" role="presentation"><span class="banda-1"></span><span class="banda-2"></span><span class="banda-3"></span></div>
       <nav class="nav-principale" aria-label="Navigazione principale">
         <div class="container">
           <ul>
