@@ -161,7 +161,7 @@ const Rapporti = (function () {
       <div class="fascia-rossa" role="presentation"></div>
       <footer>
         <div class="container footer__contenuto">
-          <span>&copy; ${C.annoFondazione}&ndash;${new Date().getFullYear()} ${escAttr(C.nome)}. Rapporti, articoli e testi di redazione.</span>
+          <span>&copy; ${C.annoFondazione}&ndash;${new Date().getFullYear()} ${escAttr(C.nome)}. </span>
         </div>
       </footer>`;
   }
