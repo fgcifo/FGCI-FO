@@ -1,0 +1,7 @@
+{
+  "name": "fgci-rapporti",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sito di redazione e pubblicazione rapporti FGCI (statico + funzione Vercel)",
+  "engines": { "node": ">=18" }
+}
