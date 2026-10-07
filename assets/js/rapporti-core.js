@@ -29,8 +29,8 @@
 // I numeri dei capitoli (1, 1.1, 2...) NON sono salvati: si ricalcolano dall'ordine.
 
 const SITE_CONFIG_RAPPORTI = {
-  nome: "FGCI Rapporti",
-  motto: "Rapporti, articoli e testi di redazione",
+  nome: "FGCI",
+  motto: "Sezione di Forlì",
   annoFondazione: 2026,
   emblema: "fgci.png",
   icona: "fgci.png",
