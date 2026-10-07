@@ -71,7 +71,7 @@
       <section class="hero hero--elenco">
         <span class="hero__kicker">Archivio della redazione</span>
         <h1 class="hero__titolo">Rapporti, articoli e testi</h1>
-        <p class="hero__sottotitolo">Rapporti, relazioni, verbali e articoli con note e bibliografia. Cerca per titolo, autore o parola chiave.</p>
+        <p class="hero__sottotitolo"></p>
         <form id="form-ricerca" class="ricerca" role="search">
           <label for="campo-ricerca" class="solo-lettori">Cerca nei testi</label>
           <input id="campo-ricerca" type="text" placeholder="Cerca per titolo, autore o parola chiave&hellip;" autocomplete="off" />
