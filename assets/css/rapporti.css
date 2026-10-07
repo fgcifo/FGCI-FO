@@ -30,7 +30,7 @@ img,svg{max-width:100%;}
 .fascia-tricolore{display:flex;height:10px;}
 .fascia-tricolore span{flex:1 1 0;}
 .fascia-tricolore .banda-1{background:#00520a;}
-.fascia-tricolore .banda-2{background:#000;}
+.fascia-tricolore .banda-2{background:#ffffff;}
 .fascia-tricolore .banda-3{background:#520100;}
 
 .nav-principale{background:#fff;border-bottom:3px solid var(--rosso-700);position:sticky;top:0;z-index:100;box-shadow:var(--ombra);}
