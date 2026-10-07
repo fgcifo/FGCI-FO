@@ -29,8 +29,8 @@ img,svg{max-width:100%;}
 /* tricolore tra intestazione e menu */
 .fascia-tricolore{display:flex;height:10px;}
 .fascia-tricolore span{flex:1 1 0;}
-.fascia-tricolore .banda-1{background:#00520a;}
-.fascia-tricolore .banda-2{background:#e6e6e6;}
+.fascia-tricolore .banda-1{background:#0b8000;}
+.fascia-tricolore .banda-2{background:#d4cfcf;}
 .fascia-tricolore .banda-3{background:#ab100e;}
 
 .nav-principale{background:#fff;border-bottom:3px solid var(--rosso-700);position:sticky;top:0;z-index:100;box-shadow:var(--ombra);}
