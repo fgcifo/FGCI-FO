@@ -1,0 +1,62 @@
+/* assets/css/redazione-editor.css — editor a due colonne della redazione Rapporti
+   (anteprima a sinistra · testo colorato a destra). Da caricare DOPO rapporti.css. */
+
+body.rx-page .container{max-width:1500px}
+
+.rx-meta{margin:0 0 14px}
+.rx-meta>summary{cursor:pointer;font-weight:700;padding:6px 0}
+
+.rx-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px;align-items:start}
+.rx-colprev,.rx-coled{min-width:0}
+.rx-label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.65;margin:0 0 6px}
+
+/* ---- anteprima (sinistra) ---- */
+.rx-prev{height:72vh;min-height:420px;overflow:auto;padding:18px 22px;border:1px solid #cfd6e0;border-radius:6px;background:#fff}
+.rx-prev .ut-lettura{margin:0;max-width:none}
+.rx-vuoto{opacity:.45;font-weight:400}
+.rx-avvisi{margin:8px 2px 0;font-size:13px;color:#b45309;min-height:18px}
+
+/* ---- barra dei bottoni ---- */
+.rx-tools{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.rx-sep{width:1px;align-self:stretch;background:#cfd6e0;margin:0 2px}
+
+/* ---- editor colorato (destra): <pre> colorato dietro a una textarea trasparente ---- */
+.rx-ed{position:relative;min-width:0;border:1px solid #000;border-radius:6px;background:#0b1220;box-shadow:inset 0 0 0 1px rgba(150,200,255,.25)}
+.rx-ed #rx-hl,.rx-ed #rx-ta{margin:0;padding:10px 12px;border:0;border-radius:6px;font:14px/1.55 Consolas,"Courier New",monospace;letter-spacing:normal;tab-size:4;
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;overflow-y:scroll;overflow-x:hidden;box-sizing:border-box}
+.rx-ed #rx-hl{position:absolute;inset:0;color:#fff;pointer-events:none;background:none;box-shadow:none}
+.rx-ed #rx-ta{position:relative;display:block;width:100%;height:72vh;min-height:420px;resize:vertical;background:transparent;box-shadow:none;color:transparent;caret-color:#fff}
+.rx-ed #rx-ta::selection{background:rgba(79,208,255,.35);color:transparent}
+.rx-ed #rx-ta:focus,.rx-ed #rx-ta:focus-visible{outline:0}
+.rx-ed:focus-within{outline:2px solid #4fa8ff;outline-offset:2px}
+
+#rx-hl .h-h2{color:#ff9f43;font-weight:700}   /* # capitolo */
+#rx-hl .h-h3{color:#ffd166;font-weight:700}   /* ## sottocapitolo */
+#rx-hl .h-q{color:#b79cff}                    /* > citazione */
+#rx-hl .h-lab{color:#f9a8d4}                  /* >> fonte */
+#rx-hl .h-li{color:#facc15}                   /* - elenchi */
+#rx-hl .h-img{color:#6ee7a0}                  /* ![immagine](url) */
+#rx-hl .h-url{color:#5aa9ff}                  /* <a href>link</a> */
+#rx-hl .h-b{color:#ff7b7b;font-weight:700}    /* <b> */
+#rx-hl .h-i{color:#f0abfc}                    /* <i> */
+#rx-hl .h-tag{color:#7d8fa8}                  /* altri tag */
+#rx-hl .h-nota{color:#2dd4bf;font-weight:700} /* [^1] e [^1]: */
+#rx-hl .h-p{color:#f472b6;font-weight:700}    /* | celle di tabella */
+#rx-hl .h-ib{color:#c084fc;font-weight:700}   /* {{tabella / riquadro / bibliografia … }} */
+#rx-hl .h-hr{color:#7d8fa8}
+
+/* ---- guida ---- */
+.rx-guida{margin:8px 0 0;font-size:13px}
+.rx-guida>summary{cursor:pointer;font-weight:600}
+.rx-guida ul{margin:6px 0 0;padding-left:18px;line-height:1.6}
+.rx-guida code{background:#eef2f7;padding:1px 5px;border-radius:3px}
+
+@media(max-width:900px){
+  .rx-split{grid-template-columns:1fr}
+  .rx-coled{order:-1}              /* su telefono si scrive sopra, l'anteprima sta sotto */
+  .rx-prev{height:auto;max-height:60vh}
+  .rx-ed #rx-ta{height:55vh;min-height:300px}
+  .rx-ed #rx-hl,.rx-ed #rx-ta{font-size:16px}
+  .rx-tools{flex-wrap:nowrap;overflow-x:auto;padding-bottom:6px}
+  .rx-tools .redazione-btn{flex:none}
+}
