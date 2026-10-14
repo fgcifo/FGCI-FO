@@ -1,31 +1,49 @@
 // assets/js/rapporti-redazione.js — redazione di Rapporti (redazione.html).
 //
-// Flusso di salvataggio (identico al pattern già usato, ma più prudente):
-//   1. login:   POST /api/rapporti { azione:"login", username, password }  ->  token di sessione;
-//   2. salva:   prima si RILEGGE l'archivio aggiornato (bozze comprese), si sostituisce solo il testo
-//               modificato (per id) e si rimanda tutta la lista con POST { azione:"salva", testi:[...] };
-//               così due redattori che lavorano su testi diversi non si cancellano a vicenda;
-//   3. l'endpoint scrive rapporti.json nella repo DATA (commit su GitHub).
+// NUOVO EDITOR A DUE COLONNE (come la Redazione Wiki):
+//   · a sinistra l'ANTEPRIMA dell'articolo, che si aggiorna mentre scrivi;
+//   · a destra la zona dove SCRIVERE il testo, con colori (un livello <pre> colorato dietro la textarea).
+// Il vecchio sistema a "blocchi" con un campo per ciascuno è stato rimosso: il documento è un unico testo.
 //
-// Lo stato dell'editor sta in "corrente" (un oggetto): i campi lo aggiornano mentre si scrive, la
-// pagina si ridisegna solo quando cambia la struttura (blocchi aggiunti, spostati, eliminati).
+// SINTASSI DEL TESTO (si converte avanti e indietro da/verso la struttura salvata in rapporti.json,
+// quindi l'endpoint /api/rapporti e i documenti già esistenti NON cambiano):
+//   # Titolo                   capitolo            ## Titolo   sottocapitolo
+//   testo normale              paragrafo (riga vuota = nuovo capoverso; a capo semplice = <br>)
+//   > citazione                (più righe > ; riga ">" sola = nuovo capoverso)     >> Fonte
+//   - voce  /  1. voce         elenco puntato / numerato (una voce per riga)
+//   {{tabella Didascalia       righe con celle separate da |  (la prima riga è l'intestazione)
+//   Voce | Valore
+//   }}
+//   {{riquadro Titolo          riquadro di evidenza, testo libero
+//   ...
+//   }}
+//   ![didascalia](https://…)   immagine           ---   separatore
+//   testo<sup>…</sup> [^1]     richiamo di nota    [^1]: testo della nota   (definizione, ovunque)
+//   {{bibliografia             un riferimento per riga, con "- " davanti
+//   - Rossi, 2020…
+//   }}
+//   Dentro il testo: <b>grassetto</b> · <i>corsivo</i> · <a href="https://…">link</a>
+//   Una riga di testo che inizia con un simbolo speciale si protegge con "\" davanti (lo fa da solo il convertitore).
+//
+// Salvataggio: identico a prima. Si RILEGGE l'archivio aggiornato (bozze comprese), si sostituisce solo
+// il documento modificato (per id) e si rimanda la lista con POST { azione:"salva", testi:[...] }.
 (function () {
   const U = Rapporti;
   const API = U.API;
   const esc = U.escAttr;
 
   const STATI = ["Bozza", "Pubblicato"];
-  const NOMI_BLOCCO = { capitolo: "Capitolo", sottocapitolo: "Sottocapitolo", paragrafo: "Paragrafo", citazione: "Citazione", elenco: "Elenco", tabella: "Tabella", riquadro: "Riquadro", immagine: "Immagine", separatore: "Separatore" };
 
-  let testi = [];          // tutti i testi, bozze incluse
-  let corrente = null;     // testo in modifica
-  let nuovo = false;       // true finché il testo non è stato salvato la prima volta
+  let testi = [];          // tutti i documenti, bozze incluse
+  let corrente = null;     // metadati del documento in modifica (il testo sta nella textarea #rx-ta)
+  let nuovo = false;       // true finché il documento non è stato salvato la prima volta
   let sporco = false;      // modifiche non salvate
-  let ultimoBlocco = null; // ultimo blocco toccato: i nuovi blocchi si inseriscono dopo di lui
   let idManuale = false;   // l'id è stato modificato a mano: smette di seguire il titolo
+  let tAnt = null;         // timer dell'anteprima
 
   const root = () => document.getElementById("redazione-root");
   const el = id => document.getElementById(id);
+  const ta = () => el("rx-ta");
 
   function messaggio(testo, errore) {
     const m = el("redazione-messaggio");
@@ -40,7 +58,7 @@
     return {
       id: "", titolo: "", sottotitolo: "", autore: API._sessione.username || "", riferimento: "", categoria: SITE_CONFIG_RAPPORTI.categorie[0],
       stato: "Bozza", data: new Date().toISOString().slice(0, 10), abstract: "", parole_chiave: [], copertina: "",
-      corpo: [{ tipo: "capitolo", titolo: "" }, { tipo: "paragrafo", testo: "" }], note: [], bibliografia: []
+      corpo: [{ tipo: "capitolo", titolo: "Primo capitolo" }, { tipo: "paragrafo", testo: "Scrivi qui il testo." }], note: [], bibliografia: []
     };
   }
 
@@ -126,8 +144,202 @@
         <h2 class="sezione-titolo">I tuoi documenti (${testi.length})</h2>
         <button type="button" class="redazione-btn redazione-btn--primario" data-azione="nuovo-testo">+ Nuovo documento</button>
       </div>
-      ${righe || `<div class="nessun-risultato">Non c'è ancora nessun testo. Crea il primo con &laquo;Nuovo testo&raquo;.</div>`}`;
+      ${righe || `<div class="nessun-risultato">Non c'è ancora nessun testo. Crea il primo con &laquo;Nuovo documento&raquo;.</div>`}`;
   }
+
+  /* =====================================================================
+     CONVERSIONE  struttura (corpo / note / bibliografia)  <->  testo dell'editor
+     ===================================================================== */
+
+  // Una riga di paragrafo che comincia con un simbolo speciale si protegge con "\" (e si ripristina leggendo).
+  const SPECIAL = /^(\\*)(#|>|[-*]\s|-{3,}\s*$|\d+\.\s|\{\{|!\[|\[\^\d+\]:)/;
+  const escRiga = l => { const t = l.trim(); return SPECIAL.test(t) ? "\\" + t : t; };
+  const unescRiga = t => { const m = SPECIAL.exec(t); return m && m[1] ? t.slice(1) : t; };
+  const una = s => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+  const righe = s => String(s == null ? "" : s).replace(/\r\n?/g, "\n").split("\n");
+  const flat = s => String(s == null ? "" : s).replace(/\r/g, "").replace(/\s*\n\s*/g, "<br>").trim();
+
+  function sorgenteDa(t) {
+    const out = [];
+    (Array.isArray(t.corpo) ? t.corpo : []).forEach(b => {
+      if (!b || typeof b !== "object") return;
+      switch (b.tipo) {
+        case "capitolo": out.push("# " + una(b.titolo)); break;
+        case "sottocapitolo": out.push("## " + una(b.titolo)); break;
+        case "citazione": {
+          const l = righe(b.testo).map(x => x.trim() ? "> " + x.trim() : ">");
+          if ((b.fonte || "").trim()) l.push(">> " + una(b.fonte));
+          out.push(l.join("\n")); break;
+        }
+        case "elenco": out.push(U.righeElenco(b).map((v, i) => (b.ordinato ? (i + 1) + ". " : "- ") + v).join("\n")); break;
+        case "tabella": out.push(["{{tabella" + (b.didascalia ? " " + una(b.didascalia) : ""), ...U.righeElenco(b), "}}"].join("\n")); break;
+        case "riquadro": out.push(["{{riquadro" + (b.titolo ? " " + una(b.titolo) : ""), ...righe(b.testo).map(x => x.trim() === "}}" ? "\\}}" : x.trim()), "}}"].join("\n")); break;
+        case "immagine": out.push(`![${una(b.didascalia).replace(/[\[\]]/g, " ")}](${String(b.url || "").trim()})`); break;
+        case "separatore": out.push("---"); break;
+        default: out.push(righe(b.testo).map(l => l.trim() ? escRiga(l) : "").join("\n").trim());
+      }
+    });
+    const note = Array.isArray(t.note) ? t.note : [];
+    if (note.length) out.push(note.map((n, i) => `[^${i + 1}]: ${flat(n && n.testo)}`).join("\n"));
+    const bib = U.biblioDi(t);
+    if (bib.length) out.push(["{{bibliografia", ...bib.map(b => "- " + flat(b.testo)), "}}"].join("\n"));
+    return out.filter(Boolean).join("\n\n") + "\n";
+  }
+
+  // Legge il testo dell'editor. strict = true (salvataggio): gli errori bloccano; strict = false (anteprima): diventano avvisi.
+  function leggiSorgente(src, strict) {
+    const L = String(src || "").replace(/\r/g, "").split("\n");
+    const corpo = [], defs = {}, bibliografia = [], avvisi = [];
+    let par = [];
+    const errore = m => { if (strict) throw new Error(m); avvisi.push(m); };
+    const flush = () => { if (par.length) { corpo.push({ tipo: "paragrafo", testo: par.join("\n") }); par = []; } };
+
+    for (let i = 0; i < L.length; i++) {
+      const r = L[i].trim();
+      let m;
+      if (!r) { flush(); continue; }
+
+      if ((m = /^\{\{\s*(tabella|riquadro|bibliografia)\b\s*(.*?)\s*(\}\})?$/i.exec(r))) {
+        flush();
+        const k = m[1].toLowerCase(), tit = una(m[2]), inner = [];
+        if (!m[3]) {
+          i++;
+          while (i < L.length && L[i].trim() !== "}}") { inner.push(L[i]); i++; }
+          if (i >= L.length) errore(`Il blocco «${k}» non è chiuso con }}.`);
+        }
+        if (k === "tabella") {
+          const rr = inner.map(x => x.trim()).filter(Boolean);
+          if (rr.length) corpo.push({ tipo: "tabella", testo: rr.join("\n"), didascalia: tit });
+        } else if (k === "riquadro") {
+          const tx = inner.map(x => x.trim() === "\\}}" ? "}}" : x.trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+          if (tx) corpo.push({ tipo: "riquadro", titolo: tit, testo: tx });
+        } else {
+          inner.map(x => x.trim().replace(/^[-*]\s+/, "")).filter(Boolean).forEach(x => bibliografia.push({ testo: x }));
+        }
+        continue;
+      }
+      if (/^---+$/.test(r)) { flush(); corpo.push({ tipo: "separatore" }); continue; }
+      if ((m = /^(#{1,2})(?:\s+(.*))?$/.exec(r))) {
+        flush();
+        const tipo = m[1].length === 1 ? "capitolo" : "sottocapitolo", titolo = una(m[2]);
+        if (!titolo) errore(`Un ${tipo} non ha il titolo (riga ${i + 1}).`);
+        corpo.push({ tipo, titolo });
+        continue;
+      }
+      if (r[0] === ">") {
+        flush();
+        const tx = []; let fonte = "";
+        while (i < L.length && L[i].trim()[0] === ">") {
+          const x = L[i].trim(); let k;
+          if ((k = /^>>\s?(.*)$/.exec(x))) fonte = k[1].trim(); else tx.push(x.replace(/^>\s?/, "").trim());
+          i++;
+        }
+        i--;
+        const testo = tx.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+        if (testo) corpo.push({ tipo: "citazione", testo, fonte });
+        continue;
+      }
+      if (/^([-*]|\d+\.)\s+/.test(r)) {
+        flush();
+        const ordinato = /^\d/.test(r), voci = [];
+        while (i < L.length && /^([-*]|\d+\.)\s+/.test(L[i].trim())) { voci.push(L[i].trim().replace(/^([-*]|\d+\.)\s+/, "")); i++; }
+        i--;
+        corpo.push({ tipo: "elenco", testo: voci.join("\n"), ordinato });
+        continue;
+      }
+      if ((m = /^!\[([^\]]*)\]\((\S+?)\)$/.exec(r))) { flush(); corpo.push({ tipo: "immagine", url: m[2], didascalia: m[1].trim() }); continue; }
+      if ((m = /^\[\^(\d+)\]:\s*(.*)$/.exec(r))) {
+        flush();
+        if (defs[m[1]] !== undefined) errore(`La nota [^${m[1]}] è definita due volte.`);
+        defs[m[1]] = m[2].trim();
+        continue;
+      }
+      par.push(unescRiga(r));
+    }
+    flush();
+
+    // note: devono essere numerate 1..N senza salti
+    const numeri = Object.keys(defs).map(Number), max = numeri.length ? Math.max(...numeri) : 0, note = [];
+    for (let n = 1; n <= max; n++) {
+      if (defs[n] === undefined) { errore(`Manca la nota [^${n}] (le note vanno numerate [^1], [^2]… senza salti).`); note.push({ testo: "" }); }
+      else {
+        if (!defs[n]) errore(`La nota ${n} è vuota: scrivila o eliminala.`);
+        note.push({ testo: defs[n] });
+      }
+    }
+    return { corpo, note, bibliografia, avvisi, max };
+  }
+
+  /* ---------- evidenziazione colorata (livello <pre> dietro la textarea) ---------- */
+
+  const E = esc;
+  const RXI = /(<a\s[^>]*>[\s\S]*?<\/a>)|(<b>[\s\S]*?<\/b>)|(<i>[\s\S]*?<\/i>)|(\[\^\d+\])|(<\/?[a-z][^>]*>)/gi;
+  const CLI = ["", "h-url", "h-b", "h-i", "h-nota", "h-tag"];
+  const tok = s => {
+    RXI.lastIndex = 0;
+    let o = "", k = 0, m;
+    while ((m = RXI.exec(s))) {
+      o += E(s.slice(k, m.index));
+      o += `<span class="${CLI[m.findIndex((x, i) => i > 0 && x !== undefined)]}">${E(m[0])}</span>`;
+      k = m.index + m[0].length;
+    }
+    return o + E(s.slice(k));
+  };
+
+  function evidenzia() {
+    const t = ta(), h = el("rx-hl");
+    if (!t || !h) return;
+    let blk = null, m;
+    const out = t.value.replace(/\r/g, "").split("\n").map(l => {
+      const r = l.trim();
+      if (blk) {
+        if (r === "}}") { blk = null; return `<span class="h-ib">${E(l)}</span>`; }
+        if (blk === "tabella") return l.split("|").map((c, i) => (i ? '<span class="h-p">|</span>' : "") + tok(c)).join("");
+        if (blk === "bibliografia" && (m = /^(\s*[-*]\s)(.*)$/.exec(l))) return `<span class="h-li">${E(m[1])}</span>` + tok(m[2]);
+        return tok(l);
+      }
+      if ((m = /^\{\{\s*(tabella|riquadro|bibliografia)\b/i.exec(r))) { blk = /\}\}\s*$/.test(r) ? null : m[1].toLowerCase(); return `<span class="h-ib">${E(l)}</span>`; }
+      if (r[0] === "\\") return tok(l);
+      if (/^##(\s|$)/.test(r)) return `<span class="h-h3">${tok(l)}</span>`;
+      if (/^#(\s|$)/.test(r)) return `<span class="h-h2">${tok(l)}</span>`;
+      if (/^---+$/.test(r)) return `<span class="h-hr">${E(l)}</span>`;
+      if (/^>>/.test(r)) return `<span class="h-lab">${tok(l)}</span>`;
+      if (r[0] === ">") return `<span class="h-q">${tok(l)}</span>`;
+      if (/^!\[[^\]]*\]\(\S+?\)$/.test(r)) return `<span class="h-img">${E(l)}</span>`;
+      if ((m = /^(\s*\[\^\d+\]:)(.*)$/.exec(l))) return `<span class="h-nota">${E(m[1])}</span>` + tok(m[2]);
+      if ((m = /^(\s*(?:[-*]|\d+\.))(\s.*)$/.exec(l))) return `<span class="h-li">${E(m[1])}</span>` + tok(m[2]);
+      return tok(l);
+    });
+    h.innerHTML = out.join("\n") + "\n ";
+    h.scrollTop = t.scrollTop;
+    h.scrollLeft = t.scrollLeft;
+  }
+
+  /* ---------- anteprima dell'articolo (stesso rendering della pagina pubblica) ---------- */
+
+  function aggiornaAnteprima() {
+    const art = el("rx-art");
+    if (!art || !corrente) return;
+    const p = leggiSorgente(ta().value, false);
+    const t = { titolo: corrente.titolo, sottotitolo: corrente.sottotitolo, abstract: corrente.abstract, corpo: p.corpo, note: p.note, bibliografia: p.bibliografia };
+
+    // richiami senza nota
+    const avvisi = p.avvisi.slice();
+    const pezzi = [t.abstract];
+    p.corpo.forEach(b => { if (typeof b.testo === "string") pezzi.push(b.testo); });
+    const usati = new Set();
+    pezzi.join("\n").replace(/\[\^(\d+)\]/g, (m, n) => { usati.add(+n); return m; });
+    [...usati].sort((a, b) => a - b).forEach(n => { if (n > p.note.length) avvisi.push(`Il richiamo [^${n}] non ha una nota.`); });
+
+    art.innerHTML = `
+      <h1 class="ut-anteprima__titolo">${esc(t.titolo) || '<span class="rx-vuoto">(senza titolo)</span>'}</h1>
+      ${t.sottotitolo ? `<p class="ut-testata-testo__sottotitolo">${esc(t.sottotitolo)}</p>` : ""}
+      ${t.abstract ? `<div class="ut-abstract"><h2>In breve</h2><p>${U.pulisciHtml(t.abstract)}</p></div>` : ""}
+      ${U.htmlIndice(t)}${U.htmlCorpo(t)}${U.htmlNote(t)}${U.htmlBibliografia(t)}`;
+    const av = el("rx-avvisi");
+    if (av) av.textContent = avvisi.length ? "⚠ " + avvisi.join(" · ") : "";
+  }
+  const rinviaAnteprima = () => { clearTimeout(tAnt); tAnt = setTimeout(aggiornaAnteprima, 120); };
 
   /* ---------- EDITOR ---------- */
 
@@ -135,84 +347,12 @@
     return [...new Set([...SITE_CONFIG_RAPPORTI.categorie, ...testi.map(t => t.categoria).filter(Boolean)])];
   }
 
-  function barraFormato(i) {
-    return `<div class="redazione-formato" role="toolbar" aria-label="Formattazione">
-      <button type="button" class="redazione-btn redazione-btn--piccolo redazione-btn--secondario" data-azione="fmt-b" data-blocco="${i}" title="Grassetto"><b>B</b></button>
-      <button type="button" class="redazione-btn redazione-btn--piccolo redazione-btn--secondario" data-azione="fmt-i" data-blocco="${i}" title="Corsivo"><i>I</i></button>
-      <button type="button" class="redazione-btn redazione-btn--piccolo redazione-btn--secondario" data-azione="fmt-link" data-blocco="${i}" title="Collegamento">Link</button>
-      <button type="button" class="redazione-btn redazione-btn--piccolo redazione-btn--secondario" data-azione="fmt-nota" data-blocco="${i}" title="Inserisce un richiamo e crea una nuova nota">+ Nota</button>
-    </div>`;
-  }
+  const BTN = "redazione-btn redazione-btn--piccolo redazione-btn--secondario";
 
-  function htmlBlocco(b, i, numeri) {
-    const numero = numeri[i] && numeri[i].num ? ` ${numeri[i].num}` : "";
-    let campi = "";
-    if (b.tipo === "capitolo" || b.tipo === "sottocapitolo") {
-      campi = `<input type="text" data-blocco="${i}" data-campo="titolo" value="${esc(b.titolo)}" placeholder="Titolo ${b.tipo === "capitolo" ? "del capitolo" : "del sottocapitolo"}" />`;
-    } else if (b.tipo === "paragrafo") {
-      campi = `${barraFormato(i)}<textarea rows="7" data-blocco="${i}" data-campo="testo" placeholder="Testo. Una riga vuota separa i capoversi.">${esc(b.testo)}</textarea>`;
-    } else if (b.tipo === "citazione") {
-      campi = `${barraFormato(i)}<textarea rows="3" data-blocco="${i}" data-campo="testo" placeholder="Testo della citazione">${esc(b.testo)}</textarea>
-        <input type="text" data-blocco="${i}" data-campo="fonte" value="${esc(b.fonte)}" placeholder="Fonte (autore, opera, anno)" />`;
-    } else if (b.tipo === "elenco") {
-      campi = `${barraFormato(i)}<textarea rows="5" data-blocco="${i}" data-campo="testo" placeholder="Una voce per riga">${esc(b.testo)}</textarea>
-        <label class="redazione-spunta"><input type="checkbox" data-blocco="${i}" data-campo="ordinato" ${b.ordinato ? "checked" : ""} /> Elenco numerato</label>`;
-    } else if (b.tipo === "tabella") {
-      campi = `<textarea rows="5" data-blocco="${i}" data-campo="testo" placeholder="Una riga per riga, celle separate da |&#10;Voce | Valore | Note&#10;Entrate | 1200 | confermate">${esc(b.testo)}</textarea>
-        <input type="text" data-blocco="${i}" data-campo="didascalia" value="${esc(b.didascalia)}" placeholder="Didascalia (facoltativa). La prima riga è l'intestazione." />`;
-    } else if (b.tipo === "riquadro") {
-      campi = `<input type="text" data-blocco="${i}" data-campo="titolo" value="${esc(b.titolo)}" placeholder="Titolo del riquadro (facoltativo)" />
-        ${barraFormato(i)}<textarea rows="4" data-blocco="${i}" data-campo="testo" placeholder="Testo in evidenza (avvertenze, sintesi, decisioni)">${esc(b.testo)}</textarea>`;
-    } else if (b.tipo === "separatore") {
-      campi = `<p class="redazione-vuoto">Linea di separazione tra due parti del testo.</p>`;
-    } else {
-      campi = `<input type="text" data-blocco="${i}" data-campo="url" value="${esc(b.url)}" placeholder="URL dell'immagine" />
-        <input type="text" data-blocco="${i}" data-campo="didascalia" value="${esc(b.didascalia)}" placeholder="Didascalia (facoltativa)" />`;
-    }
-    return `
-      <div class="redazione-blocco redazione-blocco--${b.tipo}" data-indice="${i}">
-        <div class="redazione-blocco__intestazione">
-          <span>${NOMI_BLOCCO[b.tipo]}${numero}</span>
-          <span class="redazione-blocco__strumenti">
-            <button type="button" class="redazione-btn redazione-btn--piccolo redazione-btn--secondario" data-azione="su" data-blocco="${i}" title="Sposta su" ${i === 0 ? "disabled" : ""}>&uarr;</button>
-            <button type="button" class="redazione-btn redazione-btn--piccolo redazione-btn--secondario" data-azione="giu" data-blocco="${i}" title="Sposta giù" ${i === corrente.corpo.length - 1 ? "disabled" : ""}>&darr;</button>
-            <button type="button" class="redazione-btn redazione-btn--piccolo redazione-btn--pericolo" data-azione="elimina-blocco" data-blocco="${i}" title="Elimina">&times;</button>
-          </span>
-        </div>
-        ${campi}
-      </div>`;
-  }
-
-  function disegnaBlocchi() {
-    const numeri = U.leggiCorpo(corrente);
-    el("ut-blocchi").innerHTML = corrente.corpo.map((b, i) => htmlBlocco(b, i, numeri)).join("")
-      || `<p class="redazione-vuoto">Il testo è vuoto: aggiungi un capitolo o un paragrafo.</p>`;
-  }
-
-  function disegnaNote() {
-    el("ut-note").innerHTML = corrente.note.map((n, i) => `
-      <div class="redazione-nota">
-        <span class="redazione-nota__numero">${i + 1}</span>
-        <textarea rows="2" data-nota="${i}" placeholder="Testo della nota (nel testo: [^${i + 1}])">${esc(n.testo)}</textarea>
-        <button type="button" class="redazione-btn redazione-btn--piccolo redazione-btn--pericolo" data-azione="elimina-nota" data-i="${i}" title="Elimina la nota">&times;</button>
-      </div>`).join("") || `<p class="redazione-vuoto">Nessuna nota. Usa «+ Nota» nella barra di un paragrafo per inserirne una.</p>`;
-  }
-
-  function disegnaBiblio() {
-    el("ut-biblio").innerHTML = corrente.bibliografia.map((b, i) => `
-      <div class="redazione-nota">
-        <span class="redazione-nota__numero">&bull;</span>
-        <textarea rows="2" data-biblio="${i}" placeholder="Riferimento bibliografico">${esc(b.testo)}</textarea>
-        <button type="button" class="redazione-btn redazione-btn--piccolo redazione-btn--pericolo" data-azione="elimina-biblio" data-i="${i}" title="Elimina">&times;</button>
-      </div>`).join("") || `<p class="redazione-vuoto">Nessun riferimento.</p>`;
-  }
-
-  function renderEditor() {
+  function renderEditor(sorgente) {
     const t = corrente;
     const statoOpz = STATI.map(s => `<option value="${s}" ${t.stato === s ? "selected" : ""}>${s}</option>`).join("");
     const catOpz = categoriePossibili().map(c => `<option value="${esc(c)}"></option>`).join("");
-    const aggiungi = Object.keys(NOMI_BLOCCO).map(k =>
-      `<button type="button" class="redazione-btn redazione-btn--secondario redazione-btn--piccolo" data-azione="aggiungi-blocco" data-tipo="${k}">+ ${NOMI_BLOCCO[k]}</button>`).join("");
 
     root().innerHTML = `
       <div id="redazione-messaggio" class="redazione-messaggio" style="display:none;"></div>
@@ -221,139 +361,204 @@
         <button type="button" class="redazione-btn redazione-btn--secondario" data-azione="annulla">&larr; Elenco</button>
       </div>
 
-      <div class="redazione-form">
-        <div class="redazione-campo"><label for="m-titolo">Titolo</label>
-          <input type="text" id="m-titolo" data-meta="titolo" value="${esc(t.titolo)}" /></div>
-        <div class="redazione-campo"><label for="m-sottotitolo">Sottotitolo</label>
-          <input type="text" id="m-sottotitolo" data-meta="sottotitolo" value="${esc(t.sottotitolo)}" /></div>
-        <div class="redazione-riga-campi">
-          <div class="redazione-campo"><label for="m-autore">Autore</label>
-            <input type="text" id="m-autore" data-meta="autore" value="${esc(t.autore)}" /></div>
-          <div class="redazione-campo"><label for="m-categoria">Categoria</label>
-            <input type="text" id="m-categoria" data-meta="categoria" list="m-categorie" value="${esc(t.categoria)}" />
-            <datalist id="m-categorie">${catOpz}</datalist></div>
-          <div class="redazione-campo"><label for="m-data">Data</label>
-            <input type="date" id="m-data" data-meta="data" value="${esc(t.data)}" /></div>
-          <div class="redazione-campo"><label for="m-stato">Stato</label>
-            <select id="m-stato" data-meta="stato">${statoOpz}</select></div>
+      <details class="rx-meta" open>
+        <summary>Dati del documento</summary>
+        <div class="redazione-form">
+          <div class="redazione-campo"><label for="m-titolo">Titolo</label>
+            <input type="text" id="m-titolo" data-meta="titolo" value="${esc(t.titolo)}" /></div>
+          <div class="redazione-campo"><label for="m-sottotitolo">Sottotitolo</label>
+            <input type="text" id="m-sottotitolo" data-meta="sottotitolo" value="${esc(t.sottotitolo)}" /></div>
+          <div class="redazione-riga-campi">
+            <div class="redazione-campo"><label for="m-autore">Autore</label>
+              <input type="text" id="m-autore" data-meta="autore" value="${esc(t.autore)}" /></div>
+            <div class="redazione-campo"><label for="m-categoria">Categoria</label>
+              <input type="text" id="m-categoria" data-meta="categoria" list="m-categorie" value="${esc(t.categoria)}" />
+              <datalist id="m-categorie">${catOpz}</datalist></div>
+            <div class="redazione-campo"><label for="m-data">Data</label>
+              <input type="date" id="m-data" data-meta="data" value="${esc(t.data)}" /></div>
+            <div class="redazione-campo"><label for="m-stato">Stato</label>
+              <select id="m-stato" data-meta="stato">${statoOpz}</select></div>
+          </div>
+          <div class="redazione-riga-campi">
+            <div class="redazione-campo"><label for="m-id">Identificativo (indirizzo)</label>
+              <input type="text" id="m-id" data-meta="id" value="${esc(t.id)}" ${nuovo ? "" : "readonly"} />
+              <small>Resta fisso dopo il primo salvataggio: è la parte finale del link.</small></div>
+            <div class="redazione-campo"><label for="m-riferimento">Riferimento / n. protocollo</label>
+              <input type="text" id="m-riferimento" data-meta="riferimento" value="${esc(t.riferimento)}" /></div>
+            <div class="redazione-campo"><label for="m-copertina">Immagine di copertina (URL)</label>
+              <input type="text" id="m-copertina" data-meta="copertina" value="${esc(t.copertina)}" /></div>
+          </div>
+          <div class="redazione-campo"><label for="m-abstract">Abstract (&laquo;In breve&raquo;)</label>
+            <textarea id="m-abstract" rows="3" data-meta="abstract">${esc(t.abstract)}</textarea></div>
+          <div class="redazione-campo"><label for="m-parole">Parole chiave (separate da virgola)</label>
+            <input type="text" id="m-parole" data-meta="parole_chiave" value="${esc((t.parole_chiave || []).join(", "))}" /></div>
         </div>
-        <div class="redazione-riga-campi">
-          <div class="redazione-campo"><label for="m-id">Identificativo (indirizzo)</label>
-            <input type="text" id="m-id" data-meta="id" value="${esc(t.id)}" ${nuovo ? "" : "readonly"} />
-            <small>Resta fisso dopo il primo salvataggio: è la parte finale del link.</small></div>
-          <div class="redazione-campo"><label for="m-riferimento">Riferimento / n. protocollo</label>
-            <input type="text" id="m-riferimento" data-meta="riferimento" value="${esc(t.riferimento)}" /></div>
-          <div class="redazione-campo"><label for="m-copertina">Immagine di copertina (URL)</label>
-            <input type="text" id="m-copertina" data-meta="copertina" value="${esc(t.copertina)}" /></div>
+      </details>
+
+      <div class="rx-split">
+        <div class="rx-colprev">
+          <div class="rx-label">Anteprima</div>
+          <div class="rx-prev"><article class="ut-lettura ut-lettura--anteprima" id="rx-art"></article></div>
+          <p class="rx-avvisi" id="rx-avvisi"></p>
         </div>
-        <div class="redazione-campo"><label for="m-abstract">Abstract (&laquo;In breve&raquo;)</label>
-          <textarea id="m-abstract" rows="4" data-meta="abstract">${esc(t.abstract)}</textarea></div>
-        <div class="redazione-campo"><label for="m-parole">Parole chiave (separate da virgola)</label>
-          <input type="text" id="m-parole" data-meta="parole_chiave" value="${esc((t.parole_chiave || []).join(", "))}" /></div>
-
-        <h3 class="redazione-sezione">Corpo del testo</h3>
-        <div id="ut-blocchi"></div>
-        <div class="redazione-azioni-riga">${aggiungi}</div>
-
-        <h3 class="redazione-sezione">Note</h3>
-        <div id="ut-note"></div>
-        <div class="redazione-azioni-riga">
-          <button type="button" class="redazione-btn redazione-btn--secondario redazione-btn--piccolo" data-azione="aggiungi-nota">+ Nota</button>
-        </div>
-
-        <h3 class="redazione-sezione">Bibliografia</h3>
-        <div id="ut-biblio"></div>
-        <div class="redazione-azioni-riga">
-          <button type="button" class="redazione-btn redazione-btn--secondario redazione-btn--piccolo" data-azione="aggiungi-biblio">+ Riferimento</button>
-        </div>
-
-        <div class="redazione-azioni-form">
-          <button type="button" class="redazione-btn redazione-btn--primario" data-azione="salva">Salva</button>
-          <button type="button" class="redazione-btn redazione-btn--secondario" data-azione="anteprima">Anteprima</button>
-          <button type="button" class="redazione-btn redazione-btn--secondario" data-azione="annulla">Chiudi</button>
+        <div class="rx-coled">
+          <div class="rx-label">Testo</div>
+          <div class="rx-tools" id="rx-tools" role="toolbar" aria-label="Formattazione">
+            <button type="button" class="${BTN}" data-rx="b" title="Grassetto"><b>B</b></button>
+            <button type="button" class="${BTN}" data-rx="i" title="Corsivo"><i>I</i></button>
+            <button type="button" class="${BTN}" data-rx="link" title="Collegamento">Link</button>
+            <button type="button" class="${BTN}" data-rx="nota" title="Inserisce un richiamo e crea una nuova nota">+ Nota</button>
+            <span class="rx-sep"></span>
+            <button type="button" class="${BTN}" data-rx="cap" title="Capitolo">Capitolo</button>
+            <button type="button" class="${BTN}" data-rx="sub" title="Sottocapitolo">Sottocapitolo</button>
+            <button type="button" class="${BTN}" data-rx="cit" title="Citazione">Citazione</button>
+            <button type="button" class="${BTN}" data-rx="eln" title="Elenco puntato">Elenco</button>
+            <button type="button" class="${BTN}" data-rx="elo" title="Elenco numerato">Elenco 1.</button>
+            <button type="button" class="${BTN}" data-rx="tab" title="Tabella">Tabella</button>
+            <button type="button" class="${BTN}" data-rx="riq" title="Riquadro in evidenza">Riquadro</button>
+            <button type="button" class="${BTN}" data-rx="img" title="Immagine">Immagine</button>
+            <button type="button" class="${BTN}" data-rx="sep" title="Linea di separazione">Separatore</button>
+            <button type="button" class="${BTN}" data-rx="biblio" title="Aggiunge un riferimento bibliografico">+ Riferimento</button>
+          </div>
+          <div class="rx-ed"><pre id="rx-hl" aria-hidden="true"></pre><textarea id="rx-ta" rows="24" spellcheck="false" aria-label="Testo del documento">${esc(sorgente)}</textarea></div>
+          <details class="rx-guida">
+            <summary>Guida alla scrittura</summary>
+            <ul>
+              <li><code># Titolo</code> capitolo · <code>## Titolo</code> sottocapitolo · riga vuota = nuovo capoverso</li>
+              <li><code>&gt; citazione</code> e, sotto, <code>&gt;&gt; Fonte</code> · <code>- voce</code> o <code>1. voce</code> elenchi · <code>---</code> separatore</li>
+              <li><code>{{tabella Didascalia</code> … righe <code>Voce | Valore</code> … <code>}}</code> (la prima riga è l'intestazione)</li>
+              <li><code>{{riquadro Titolo</code> … testo … <code>}}</code> · <code>![didascalia](https://…)</code> immagine</li>
+              <li>Note: <code>[^1]</code> nel testo e <code>[^1]: testo della nota</code> altrove (il pulsante «+ Nota» fa tutto) · bibliografia: <code>{{bibliografia</code> … <code>- riferimento</code> … <code>}}</code></li>
+              <li>Nel testo: <code>&lt;b&gt;grassetto&lt;/b&gt;</code>, <code>&lt;i&gt;corsivo&lt;/i&gt;</code>, <code>&lt;a href="https://…"&gt;link&lt;/a&gt;</code></li>
+            </ul>
+          </details>
         </div>
       </div>
-      <div id="ut-anteprima"></div>`;
 
-    disegnaBlocchi();
-    disegnaNote();
-    disegnaBiblio();
+      <div class="redazione-azioni-form">
+        <button type="button" class="redazione-btn redazione-btn--primario" data-azione="salva">Salva</button>
+        <button type="button" class="redazione-btn redazione-btn--secondario" data-azione="annulla">Chiudi</button>
+      </div>`;
+
+    const area = ta();
+    area.addEventListener("scroll", () => { const h = el("rx-hl"); h.scrollTop = area.scrollTop; h.scrollLeft = area.scrollLeft; });
+    if (window.ResizeObserver) new ResizeObserver(evidenzia).observe(area);
+    evidenzia();
+    aggiornaAnteprima();
   }
 
-  /* ---------- OPERAZIONI SULL'EDITOR ---------- */
+  /* ---------- BOTTONI: scrivono nel testo ---------- */
 
-  function nuovoBlocco(tipo) {
-    if (tipo === "capitolo" || tipo === "sottocapitolo") return { tipo, titolo: "" };
-    if (tipo === "citazione") return { tipo, testo: "", fonte: "" };
-    if (tipo === "immagine") return { tipo, url: "", didascalia: "" };
-    if (tipo === "elenco") return { tipo, testo: "", ordinato: false };
-    if (tipo === "tabella") return { tipo, testo: "", didascalia: "" };
-    if (tipo === "riquadro") return { tipo, titolo: "", testo: "" };
-    if (tipo === "separatore") return { tipo };
-    return { tipo: "paragrafo", testo: "" };
+  // Sostituisce [ini, fine) con "testo" mantenendo annulla (Ctrl+Z); poi seleziona da ini+a a ini+b.
+  function scrivi(ini, fine, testo, a, b) {
+    const t = ta();
+    t.focus();
+    t.setSelectionRange(ini, fine);
+    if (!document.execCommand || !document.execCommand("insertText", false, testo)) {
+      t.setRangeText(testo, ini, fine, "end");
+      t.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    t.setSelectionRange(ini + a, ini + b);
   }
 
-  function campoBlocco(i, campo) {
-    return root().querySelector(`[data-blocco="${i}"][data-campo="${campo}"]`);
+  // Imposta tutto il testo (per le operazioni che toccano più punti) e sposta il cursore.
+  function imposta(valore, a, b) {
+    const t = ta();
+    t.value = valore;
+    t.blur();
+    t.focus();
+    t.setSelectionRange(a, b === undefined ? a : b);
+    t.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
-  // Inserisce testo attorno alla selezione di un paragrafo e aggiorna lo stato.
-  function inserisci(i, prima, dopo) {
-    const ta = campoBlocco(i, "testo");
-    if (!ta) return;
-    const s = ta.selectionStart, e = ta.selectionEnd;
-    const sel = ta.value.slice(s, e);
-    ta.value = ta.value.slice(0, s) + prima + sel + dopo + ta.value.slice(e);
-    const pos = sel ? s + prima.length + sel.length + dopo.length : s + prima.length;
-    ta.focus();
-    ta.setSelectionRange(pos, pos);
-    corrente.corpo[i].testo = ta.value;
-    sporco = true;
+  function inline(pre, post, segnaposto) {
+    const t = ta(), s = t.selectionStart, e = t.selectionEnd, sel = t.value.slice(s, e) || segnaposto;
+    scrivi(s, e, pre + sel + post, pre.length, pre.length + sel.length);
   }
 
-  function aggiungiNotaAlCursore(i) {
-    const n = corrente.note.length + 1;
-    corrente.note.push({ testo: "" });
-    inserisci(i, `[^${n}]`, "");
-    disegnaNote();
-    const campo = root().querySelector(`[data-nota="${n - 1}"]`);
-    if (campo) campo.scrollIntoView({ block: "center", behavior: "smooth" });
+  // Inserisce un blocco su righe proprie (con righe vuote prima e dopo). fnRiga: prefisso per ogni riga della selezione.
+  function blocco(pre, segnaposto, post, fnRiga) {
+    const t = ta(), v = t.value, s = t.selectionStart, e = t.selectionEnd;
+    let sel = v.slice(s, e).trim() || segnaposto;
+    if (fnRiga) { sel = sel.split("\n").map((l, i) => fnRiga(i) + l).join("\n"); pre = ""; }
+    const prima = v.slice(0, s), dopo = v.slice(e);
+    const p = !prima ? "" : prima.endsWith("\n\n") ? "" : prima.endsWith("\n") ? "\n" : "\n\n";
+    const q = !dopo.trim() ? "\n" : dopo.startsWith("\n\n") ? "" : dopo.startsWith("\n") ? "\n" : "\n\n";
+    scrivi(s, e, p + pre + sel + post + q, p.length + pre.length, p.length + pre.length + (fnRiga ? sel.length : sel.length));
   }
 
-  // Eliminando la nota N, i richiami [^N] spariscono e quelli successivi scalano di uno.
-  function rinumeraRichiami(rimossa) {
-    const f = s => (s || "").replace(/\[\^(\d+)\]/g, (m, n) => {
-      const k = +n;
-      if (k === rimossa) return "";
-      return k > rimossa ? `[^${k - 1}]` : m;
-    });
-    corrente.abstract = f(corrente.abstract);
-    corrente.corpo.forEach(b => { if (typeof b.testo === "string") b.testo = f(b.testo); });
-    corrente.note.forEach(n => { n.testo = f(n.testo); });
-  }
+  function offsetRighe(L) { const off = []; let o = 0; L.forEach(l => { off.push(o); o += l.length + 1; }); return off; }
 
-  function sposta(i, delta) {
-    const j = i + delta;
-    if (j < 0 || j >= corrente.corpo.length) return;
-    [corrente.corpo[i], corrente.corpo[j]] = [corrente.corpo[j], corrente.corpo[i]];
-    ultimoBlocco = j;
-    sporco = true;
-    disegnaBlocchi();
-  }
-
-  function linkAlCursore(i) {
-    const ta = campoBlocco(i, "testo");
-    if (!ta) return;
+  function linkAlCursore() {
+    const t = ta();
     const url = prompt("Indirizzo del collegamento (https://… oppure #ancora):", "https://");
     if (!url || !url.trim() || url.trim() === "https://") return;
-    const s = ta.selectionStart, e = ta.selectionEnd;
-    if (s === e) {
-      const t = prompt("Testo da mostrare:", url.trim());
-      if (!t) return;
-      ta.setRangeText(t, s, e, "select");
-      ta.setSelectionRange(s, s + t.length);
+    const s = t.selectionStart, e = t.selectionEnd;
+    const sel = t.value.slice(s, e) || prompt("Testo da mostrare:", url.trim());
+    if (!sel) return;
+    const pre = `<a href="${url.trim().replace(/"/g, "&quot;")}">`;
+    scrivi(s, e, pre + sel + "</a>", pre.length, pre.length + sel.length);
+  }
+
+  function immagineAlCursore() {
+    const url = prompt("Indirizzo dell'immagine (https://…):", "https://");
+    if (!url || !url.trim() || url.trim() === "https://") return;
+    const did = (prompt("Didascalia (facoltativa):", "") || "").replace(/[\[\]]/g, " ").trim();
+    blocco("", `![${did}](${url.trim()})`, "");
+  }
+
+  // Inserisce [^n] al cursore e prepara la definizione "[^n]: " (dopo le altre note, o prima della bibliografia, o in fondo).
+  function aggiungiNota() {
+    const t = ta(), v = t.value, s = t.selectionStart, e = t.selectionEnd;
+    const nums = [...v.matchAll(/\[\^(\d+)\]/g)].map(x => +x[1]);
+    const n = (nums.length ? Math.max(...nums) : 0) + 1;
+    let w = v.slice(0, s) + `[^${n}]` + v.slice(e);
+    const L = w.split("\n"), off = offsetRighe(L), def = `[^${n}]: `;
+    let ult = -1;
+    L.forEach((l, i) => { if (/^\s*\[\^\d+\]:/.test(l)) ult = i; });
+    let pos, ins;
+    if (ult >= 0) { pos = off[ult] + L[ult].length; ins = "\n" + def; }
+    else {
+      const ib = L.findIndex(l => /^\{\{\s*bibliografia\b/i.test(l.trim()));
+      if (ib >= 0) { pos = off[ib]; ins = def + "\n\n"; }
+      else { pos = w.length; ins = (w.endsWith("\n") ? "" : "\n") + "\n" + def; }
     }
-    inserisci(i, `<a href="${url.trim().replace(/"/g, "&quot;")}">`, "</a>");
+    w = w.slice(0, pos) + ins + w.slice(pos);
+    imposta(w, pos + ins.indexOf(def) + def.length);
+  }
+
+  function aggiungiRiferimento() {
+    const t = ta(), v = t.value, L = v.split("\n"), off = offsetRighe(L), ph = "Nuovo riferimento";
+    const ib = L.findIndex(l => /^\{\{\s*bibliografia\b/i.test(l.trim()) && !/\}\}\s*$/.test(l.trim()));
+    let j = -1;
+    if (ib >= 0) for (let k = ib + 1; k < L.length; k++) if (L[k].trim() === "}}") { j = k; break; }
+    if (j >= 0) {
+      const ins = "- " + ph + "\n";
+      imposta(v.slice(0, off[j]) + ins + v.slice(off[j]), off[j] + 2, off[j] + 2 + ph.length);
+    } else {
+      const pre = v.trim() ? (v.endsWith("\n") ? "\n" : "\n\n") : "";
+      const ins = pre + "{{bibliografia\n- " + ph + "\n}}\n", a = v.length + pre.length + "{{bibliografia\n- ".length;
+      imposta(v + ins, a, a + ph.length);
+    }
+  }
+
+  function azioneStrumento(k) {
+    switch (k) {
+      case "b": inline("<b>", "</b>", "grassetto"); break;
+      case "i": inline("<i>", "</i>", "corsivo"); break;
+      case "link": linkAlCursore(); break;
+      case "nota": aggiungiNota(); break;
+      case "cap": blocco("# ", "Titolo del capitolo", ""); break;
+      case "sub": blocco("## ", "Titolo del sottocapitolo", ""); break;
+      case "cit": { const t = ta(); if (/\n/.test(t.value.slice(t.selectionStart, t.selectionEnd).trim())) blocco("", "", "", () => "> "); else blocco("> ", "Testo della citazione", "\n>> Fonte (autore, opera, anno)"); break; }
+      case "eln": { const t = ta(); if (/\n/.test(t.value.slice(t.selectionStart, t.selectionEnd).trim())) blocco("", "", "", () => "- "); else blocco("- ", "prima voce", "\n- seconda voce"); break; }
+      case "elo": { const t = ta(); if (/\n/.test(t.value.slice(t.selectionStart, t.selectionEnd).trim())) blocco("", "", "", i => (i + 1) + ". "); else blocco("1. ", "prima voce", "\n2. seconda voce"); break; }
+      case "tab": blocco("{{tabella Didascalia\nVoce | Valore | Note\n", "Entrate | 1200 | confermate", "\n}}"); break;
+      case "riq": blocco("{{riquadro Titolo\n", "Testo in evidenza", "\n}}"); break;
+      case "img": immagineAlCursore(); break;
+      case "sep": blocco("---", "", ""); break;
+      case "biblio": aggiungiRiferimento(); break;
+    }
   }
 
   /* ---------- VALIDAZIONE E SALVATAGGIO ---------- */
@@ -365,39 +570,21 @@
     if (!(t.titolo || "").trim()) throw new Error("Il titolo è obbligatorio.");
     if (!(t.categoria || "").trim()) throw new Error("La categoria è obbligatoria.");
 
-    const corpo = [];
-    for (const b of t.corpo) {
-      if (b.tipo === "capitolo" || b.tipo === "sottocapitolo") {
-        if (!(b.titolo || "").trim()) throw new Error(`Un ${NOMI_BLOCCO[b.tipo].toLowerCase()} non ha il titolo.`);
-        corpo.push({ tipo: b.tipo, titolo: b.titolo.trim() });
-      } else if (b.tipo === "paragrafo") {
-        if ((b.testo || "").trim()) corpo.push({ tipo: "paragrafo", testo: b.testo.trim() });
-      } else if (b.tipo === "citazione") {
-        if ((b.testo || "").trim()) corpo.push({ tipo: "citazione", testo: b.testo.trim(), fonte: (b.fonte || "").trim() });
-      } else if (b.tipo === "elenco") {
-        if ((b.testo || "").trim()) corpo.push({ tipo: "elenco", testo: b.testo.trim(), ordinato: !!b.ordinato });
-      } else if (b.tipo === "tabella") {
-        if ((b.testo || "").trim()) corpo.push({ tipo: "tabella", testo: b.testo.trim(), didascalia: (b.didascalia || "").trim() });
-      } else if (b.tipo === "riquadro") {
-        if ((b.testo || "").trim()) corpo.push({ tipo: "riquadro", titolo: (b.titolo || "").trim(), testo: b.testo.trim() });
-      } else if (b.tipo === "separatore") {
-        corpo.push({ tipo: "separatore" });
-      } else if (b.tipo === "immagine") {
-        if ((b.url || "").trim()) corpo.push({ tipo: "immagine", url: b.url.trim(), didascalia: (b.didascalia || "").trim() });
-      }
-    }
-    // le note non si scartano mai (i richiami sono numerati): una nota vuota è un errore da correggere
-    const note = t.note.map((n, i) => {
-      if (!(n.testo || "").trim()) throw new Error(`La nota ${i + 1} è vuota: scrivila o eliminala.`);
-      return { testo: n.testo.trim() };
+    const p = leggiSorgente(ta().value, true);
+
+    // ogni richiamo [^n] deve avere la sua nota
+    const pezzi = [t.abstract];
+    p.corpo.forEach(b => { if (typeof b.testo === "string") pezzi.push(b.testo); });
+    pezzi.join("\n").replace(/\[\^(\d+)\]/g, (m, n) => {
+      if (+n > p.note.length || +n < 1) throw new Error(`Il richiamo [^${n}] non ha una nota: aggiungi «[^${n}]: testo» oppure toglilo.`);
+      return m;
     });
 
     return {
       id, titolo: t.titolo.trim(), riferimento: (t.riferimento || "").trim(), sottotitolo: (t.sottotitolo || "").trim(), autore: (t.autore || "").trim(),
       categoria: t.categoria.trim(), stato: STATI.includes(t.stato) ? t.stato : "Bozza", data: t.data || "",
       abstract: (t.abstract || "").trim(), parole_chiave: (t.parole_chiave || []).filter(Boolean),
-      copertina: (t.copertina || "").trim(), corpo, note,
-      bibliografia: t.bibliografia.filter(b => (b.testo || "").trim()).map(b => ({ testo: b.testo.trim() }))
+      copertina: (t.copertina || "").trim(), corpo: p.corpo, note: p.note, bibliografia: p.bibliografia
     };
   }
 
@@ -438,32 +625,18 @@
     }
   }
 
-  function anteprima() {
-    let t;
-    try { t = costruisciTesto(); } catch (e) { messaggio(e.message, true); return; }
-    el("ut-anteprima").innerHTML = `
-      <h2 class="sezione-titolo" style="margin-top:36px;">Anteprima</h2>
-      <article class="ut-lettura ut-lettura--anteprima">
-        <h1 class="ut-anteprima__titolo">${esc(t.titolo)}</h1>
-        ${t.sottotitolo ? `<p class="ut-testata-testo__sottotitolo">${esc(t.sottotitolo)}</p>` : ""}
-        ${t.abstract ? `<div class="ut-abstract"><h2>In breve</h2><p>${U.pulisciHtml(t.abstract)}</p></div>` : ""}
-        ${U.htmlCorpo(t)}${U.htmlNote(t)}${U.htmlBibliografia(t)}
-      </article>`;
-    el("ut-anteprima").scrollIntoView({ behavior: "smooth" });
-  }
-
   /* ---------- EVENTI ---------- */
 
   function apri(testo, isNuovo) {
-    corrente = JSON.parse(JSON.stringify(testo));
-    corrente.note = Array.isArray(corrente.note) ? corrente.note : [];
-    corrente.bibliografia = Array.isArray(corrente.bibliografia) ? corrente.bibliografia : [];
-    corrente.corpo = Array.isArray(corrente.corpo) ? corrente.corpo : [];
+    const copia = JSON.parse(JSON.stringify(testo));
+    copia.note = Array.isArray(copia.note) ? copia.note : [];
+    copia.bibliografia = Array.isArray(copia.bibliografia) ? copia.bibliografia : [];
+    copia.corpo = Array.isArray(copia.corpo) ? copia.corpo : [];
+    corrente = copia;
     nuovo = isNuovo;
-    ultimoBlocco = null;
     sporco = false;
     idManuale = false;
-    renderEditor();
+    renderEditor(sorgenteDa(copia));
     window.scrollTo({ top: 0 });
   }
 
@@ -476,56 +649,26 @@
     const r = root();
 
     r.addEventListener("click", e => {
+      const s = e.target.closest("[data-rx]");
+      if (s && corrente) { azioneStrumento(s.dataset.rx); return; }
       const b = e.target.closest("[data-azione]");
       if (!b || b.disabled) return;
-      const i = +b.dataset.blocco;
       switch (b.dataset.azione) {
         case "nuovo-testo": apri(vuoto(), true); break;
         case "modifica": { const t = testi.find(x => x.id === b.dataset.id); if (t) apri(t, false); break; }
         case "elimina-testo": eliminaTesto(b.dataset.id); break;
         case "annulla": chiudiEditor(); break;
         case "salva": salva(b); break;
-        case "anteprima": anteprima(); break;
-        case "aggiungi-blocco":
-          { const pos = ultimoBlocco !== null && ultimoBlocco < corrente.corpo.length ? ultimoBlocco + 1 : corrente.corpo.length;
-            corrente.corpo.splice(pos, 0, nuovoBlocco(b.dataset.tipo));
-            ultimoBlocco = pos;
-            sporco = true;
-            disegnaBlocchi();
-            const nodo = el("ut-blocchi").children[pos];
-            const campo = nodo && nodo.querySelector("input,textarea");
-            if (campo) campo.focus(); else if (nodo) nodo.scrollIntoView({ block: "center" }); }
-          break;
-        case "su": sposta(i, -1); break;
-        case "giu": sposta(i, 1); break;
-        case "elimina-blocco":
-          corrente.corpo.splice(i, 1);
-          ultimoBlocco = null;
-          sporco = true;
-          disegnaBlocchi();
-          break;
-        case "fmt-b": inserisci(i, "<b>", "</b>"); break;
-        case "fmt-i": inserisci(i, "<i>", "</i>"); break;
-        case "fmt-link": linkAlCursore(i); break;
-        case "fmt-nota": aggiungiNotaAlCursore(i); break;
-        case "aggiungi-nota": corrente.note.push({ testo: "" }); sporco = true; disegnaNote(); break;
-        case "elimina-nota":
-          if (!confirm("Eliminare la nota? I richiami nel testo verranno rinumerati.")) break;
-          rinumeraRichiami(+b.dataset.i + 1);
-          corrente.note.splice(+b.dataset.i, 1);
-          sporco = true;
-          disegnaBlocchi();
-          disegnaNote();
-          el("m-abstract").value = corrente.abstract;
-          break;
-        case "aggiungi-biblio": corrente.bibliografia.push({ testo: "" }); sporco = true; disegnaBiblio(); break;
-        case "elimina-biblio": corrente.bibliografia.splice(+b.dataset.i, 1); sporco = true; disegnaBiblio(); break;
       }
     });
+
+    // i bottoni non tolgono il fuoco (e la selezione) alla casella di testo
+    r.addEventListener("mousedown", e => { if (e.target.closest("[data-rx]")) e.preventDefault(); });
 
     r.addEventListener("input", e => {
       const f = e.target;
       if (!corrente) return;
+      if (f.id === "rx-ta") { evidenzia(); rinviaAnteprima(); sporco = true; return; }
       if (f.dataset.meta) {
         const k = f.dataset.meta;
         if (k === "parole_chiave") corrente.parole_chiave = f.value.split(/[,;]/).map(s => s.trim()).filter(Boolean);
@@ -535,21 +678,9 @@
           corrente.id = U.slugify(f.value);
           el("m-id").value = corrente.id;
         }
-      } else if (f.dataset.blocco !== undefined && f.dataset.campo) {
-        corrente.corpo[+f.dataset.blocco][f.dataset.campo] = f.type === "checkbox" ? f.checked : f.value;
-      } else if (f.dataset.nota !== undefined) {
-        corrente.note[+f.dataset.nota].testo = f.value;
-      } else if (f.dataset.biblio !== undefined) {
-        corrente.bibliografia[+f.dataset.biblio].testo = f.value;
-      } else {
-        return;
+        if (k === "titolo" || k === "sottotitolo" || k === "abstract") rinviaAnteprima();
+        sporco = true;
       }
-      sporco = true;
-    });
-
-    r.addEventListener("focusin", e => {
-      const bl = e.target.closest && e.target.closest(".redazione-blocco");
-      if (bl) ultimoBlocco = +bl.dataset.indice;
     });
 
     window.addEventListener("beforeunload", ev => {
