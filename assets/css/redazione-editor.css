@@ -6,8 +6,9 @@ body.rx-page .container{max-width:1500px}
 .rx-meta{margin:0 0 14px}
 .rx-meta>summary{cursor:pointer;font-weight:700;padding:6px 0}
 
-.rx-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px;align-items:start}
+.rx-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
 .rx-colprev,.rx-coled{min-width:0}
+.rx-coled{order:-1}              /* testo a sinistra, anteprima a destra */
 .rx-label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.65;margin:0 0 6px}
 
 /* ---- anteprima (sinistra) ---- */
