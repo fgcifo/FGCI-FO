@@ -36,7 +36,7 @@ Ogni salvataggio dalla redazione viene confrontato con lo stato precedente: ogni
 - Se `rapporti.json` viene modificato **fuori dal sito** (a mano su GitHub), la verifica lo segnala e al salvataggio successivo il cambiamento è messo agli atti come `*_ESTERNA`.
 - Se `chain.json` esiste già con un formato diverso da `{"versione":1,"blocchi":[...]}`, il sito si rifiuta di sovrascriverlo.
 - `GET /api/chain` senza token: solo esito (`valida`, `coerente`, n. blocchi, ultimo hash) — nessun titolo né bozza. Con token: registro completo.
-- Pagina `registro.html` (redazione): cronologia, esito della verifica, download di `chain.json`; «Cronologia» per documento nell'elenco.
+- Pagina `registro.html` (redazione): cronologia, esito della verifica, download di `chain.json`.
 - Non vengono registrati i login (non sono modifiche). Il contenuto completo di ogni versione resta nella storia git di `rapporti.json`; il registro ne conserva l'impronta.
 
 Test: `npm test` (GitHub simulato in memoria, nessuna rete).

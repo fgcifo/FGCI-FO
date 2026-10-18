@@ -114,7 +114,6 @@
           <p class="redazione-riga__meta">${[t.autore, U.formattaData(t.data), U.tempoLettura(t) + " min"].filter(Boolean).map(esc).join(" · ")}</p>
         </div>
         <div class="redazione-riga__azioni">
-          <a class="redazione-btn redazione-btn--secondario redazione-btn--piccolo" href="registro.html?id=${encodeURIComponent(t.id)}" title="Cronologia delle modifiche">Cronologia</a>
           ${t.stato === "Pubblicato" ? `<a class="redazione-btn redazione-btn--secondario redazione-btn--piccolo" href="index.html?id=${encodeURIComponent(t.id)}" target="_blank" rel="noopener">Apri</a>` : ""}
           <button type="button" class="redazione-btn redazione-btn--primario redazione-btn--piccolo" data-azione="modifica" data-id="${esc(t.id)}">Modifica</button>
           <button type="button" class="redazione-btn redazione-btn--pericolo redazione-btn--piccolo" data-azione="elimina-testo" data-id="${esc(t.id)}">Elimina</button>
