@@ -243,3 +243,16 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--rosso-600);outli
   body{background:#fff;} .testata{background:#fff;color:#000;padding:0 0 10px;border-bottom:2px solid var(--rosso-700);} .testata__nome a,.testata__motto{color:#000;}
   .ut-pagina{display:block;} .ut-lettura,.ut-testata-testo{border:none;box-shadow:none;padding:0;} .ut-cap{break-after:avoid;} .ut-tabella,.ut-riquadro{break-inside:avoid;}
 }
+
+/* ---- registro delle modifiche (registro.html) ---- */
+.registro-esito{margin:10px 0;padding:10px 14px;border-radius:var(--radius);font-family:var(--font-chrome);font-weight:600;}
+.registro-esito--ok{background:#d9efde;color:#1e4d2b;} .registro-esito--ko{background:#f8d7da;color:#7a1620;}
+.registro-blocco{background:#fff;border:1px solid var(--bordo);border-left:4px solid var(--rosso-700);border-radius:var(--radius);padding:12px 16px;margin:12px 0;box-shadow:var(--ombra);}
+.registro-blocco--elimina,.registro-blocco--elimina_esterna{border-left-color:#444;}
+.registro-blocco--crea,.registro-blocco--genesi{border-left-color:#2e7d46;}
+.registro-blocco--crea_esterna,.registro-blocco--modifica_esterna,.registro-blocco--elimina_esterna{background:#fff8e6;}
+.registro-blocco__testa{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-family:var(--font-chrome);}
+.registro-n{color:var(--inchiostro-tenue);font-weight:700;} .registro-id{color:var(--inchiostro-tenue);font-weight:400;}
+.registro-azione{margin-left:0;background:var(--carta-media);color:var(--rosso-900);}
+.registro-meta{margin:4px 0;color:var(--inchiostro-tenue);font-size:.9rem;}
+.registro-dettagli{font-size:.85rem;} .registro-dettagli code{word-break:break-all;font-size:.8rem;}

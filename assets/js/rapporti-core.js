@@ -35,7 +35,8 @@ const SITE_CONFIG_RAPPORTI = {
   emblema: "fgci.png",
   icona: "fgci.png",
   categorie: ["Rapporto", "Articolo", "Relazione", "Verbale", "Comunicato", "Saggio", "Appunti"],
-  endpoint: "/api/rapporti"
+  endpoint: "/api/rapporti",
+  endpointRegistro: "/api/chain"
 };
 
 const Rapporti = (function () {
@@ -324,6 +325,15 @@ const Rapporti = (function () {
         throw e;
       }
       return Array.isArray(data.testi) ? data.testi : [];
+    },
+
+    // Registro a blocchi delle modifiche (solo redazione): { blocchi, verifica, coerenza }.
+    async loadRegistro() {
+      if (!this.isAuthenticated()) throw new Error("Non autenticato: effettua il login.");
+      const res = await fetch(SITE_CONFIG_RAPPORTI.endpointRegistro, { headers: { Authorization: "Bearer " + this._sessione.token }, cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { const e = new Error(data.error || `HTTP ${res.status}`); e.status = res.status; throw e; }
+      return data;
     },
 
     async saveTesti(lista) {
