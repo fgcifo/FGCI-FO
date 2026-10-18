@@ -50,7 +50,9 @@ test("modifiche successive, eliminazione e riepilogo pubblico senza dati riserva
   const b = leggiChain(gh);
   assert.deepEqual(b.map(x => x.azione), ["GENESI", "CREA", "MODIFICA", "ELIMINA"]);
   assert.equal(b[2].utente, "mario");
-  assert.equal(b[2].dettagli.corpo.aggiunti, 2);
+  assert.deepEqual(b[2].modifiche.map(m => m.op), ["modificato", "aggiunto"]);
+  assert.equal(b[1].contenuto.id, "uno");
+  assert.equal(b[3].contenuto.id, "uno");   // l'eliminato resta recuperabile
   assert.equal(b[3].hashDopo, null);
   assert.ok(C.verificaCatena(b, segreto()).valida);
   const pub = await chiama(chainApi);
@@ -130,4 +132,31 @@ test("senza token non si salva e non si legge il registro completo", async () =>
   creaMock({});
   assert.equal((await salva("falso", [doc("uno")])).status, 401);
   assert.equal((await chiama(chainApi, { token: "falso" })).status, 401);
+});
+
+test("modifiche effettive: dove, prima e dopo di ogni parte cambiata", async () => {
+  const gh = creaMock({});
+  const t = await login("anna");
+  const P = (x) => ({ tipo: "paragrafo", testo: x });
+  const v1 = doc("uno", { corpo: [{ tipo: "capitolo", titolo: "Premessa" }, P("alfa"), { tipo: "capitolo", titolo: "Metodo" }, { tipo: "sottocapitolo", titolo: "Dati" }, P("beta"), P("gamma"), P("delta")], note: [{ testo: "n1" }] });
+  await salva(t, [v1]);
+  const v2 = doc("uno", {
+    titolo: "Titolo nuovo",
+    corpo: [{ tipo: "capitolo", titolo: "Premessa" }, P("alfa"), { tipo: "capitolo", titolo: "Metodo" }, { tipo: "sottocapitolo", titolo: "Dati" }, P("beta corretto"), P("delta"), P("gamma"), P("nuovo")],
+    note: [{ testo: "n1" }, { testo: "n2" }]
+  });
+  await salva(t, [v2]);
+  const blocco = leggiChain(gh).pop();
+  const m = blocco.modifiche;
+  const campo = m.find(x => x.sezione === "campo");
+  assert.deepEqual([campo.campo, campo.da, campo.a], ["titolo", "Titolo uno", "Titolo nuovo"]);
+  const mod = m.find(x => x.op === "modificato" && x.sezione === "corpo");
+  assert.equal(mod.da.testo, "beta"); assert.equal(mod.a.testo, "beta corretto");
+  assert.equal(mod.dove, "Paragrafo (blocco 5) · Capitolo 2 «Metodo» › Sottocapitolo 2.1 «Dati»");
+  assert.equal(m.filter(x => x.op === "spostato").length, 1);          // gamma/delta scambiati
+  const agg = m.find(x => x.op === "aggiunto" && x.sezione === "corpo");
+  assert.equal(agg.a.testo, "nuovo"); assert.equal(agg.posizione, 8);
+  assert.equal(m.find(x => x.sezione === "note").dove, "Nota 2");
+  assert.equal(m.filter(x => x.sezione === "corpo" && ["alfa"].includes(x.a && x.a.testo)).length, 0);   // le parti invariate non compaiono
+  assert.ok(C.verificaCatena(leggiChain(gh), segreto()).valida);
 });

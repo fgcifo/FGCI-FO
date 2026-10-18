@@ -256,3 +256,10 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--rosso-600);outli
 .registro-azione{margin-left:0;background:var(--carta-media);color:var(--rosso-900);}
 .registro-meta{margin:4px 0;color:var(--inchiostro-tenue);font-size:.9rem;}
 .registro-dettagli{font-size:.85rem;} .registro-dettagli code{word-break:break-all;font-size:.8rem;}
+.registro-mods{list-style:none;margin:8px 0;padding:0;}
+.registro-mod{margin:8px 0;padding:8px 12px;background:var(--carta);border-radius:var(--radius);border-left:3px solid var(--bordo);}
+.registro-mod__op{font-family:var(--font-chrome);font-weight:700;font-size:.78rem;text-transform:uppercase;color:var(--rosso-800);}
+.registro-mod__dove{font-family:var(--font-chrome);font-size:.9rem;color:var(--inchiostro-tenue);}
+.registro-diff{white-space:pre-wrap;margin-top:6px;font-size:.95rem;overflow-wrap:anywhere;}
+.registro-diff ins{background:#d9efde;color:#1e4d2b;text-decoration:none;border-radius:2px;}
+.registro-diff del{background:#f8d7da;color:#7a1620;border-radius:2px;}

@@ -29,7 +29,8 @@ Ogni salvataggio dalla redazione viene confrontato con lo stato precedente: ogni
 | `index`, `timestamp`, `previousHash` | posizione, momento, collegamento al blocco precedente |
 | `utente`, `azione` | chi e cosa: `CREA`, `MODIFICA`, `ELIMINA` (o `*_ESTERNA`, vedi sotto) |
 | `documento`, `hashPrima`, `hashDopo` | documento toccato e SHA-256 del suo contenuto prima/dopo |
-| `campiModificati`, `dettagli`, `riepilogo` | che cosa è cambiato |
+| `modifiche`, `campiModificati`, `riepilogo` | le modifiche **effettive**: per ogni parte cambiata, *dove* (capitolo, sottocapitolo, n. blocco), testo *prima* e testo *dopo*; blocchi aggiunti, rimossi, modificati, spostati |
+| `contenuto` | solo in `CREA` / `ELIMINA`: il documento intero (un documento eliminato resta recuperabile) |
 | `hash`, `firma` | impronta del blocco e firma del server |
 
 - Il primo blocco (`GENESI`) registra l'impronta dei documenti già presenti all'attivazione.
@@ -37,6 +38,7 @@ Ogni salvataggio dalla redazione viene confrontato con lo stato precedente: ogni
 - Se `chain.json` esiste già con un formato diverso da `{"versione":1,"blocchi":[...]}`, il sito si rifiuta di sovrascriverlo.
 - `GET /api/chain` senza token: solo esito (`valida`, `coerente`, n. blocchi, ultimo hash) — nessun titolo né bozza. Con token: registro completo.
 - Pagina `registro.html` (redazione): cronologia, esito della verifica, download di `chain.json`.
-- Non vengono registrati i login (non sono modifiche). Il contenuto completo di ogni versione resta nella storia git di `rapporti.json`; il registro ne conserva l'impronta.
+- Testi oltre 20.000 caratteri per singola parte vengono tagliati nel registro (`troncato: true`); il testo completo resta nella storia git. I blocchi scritti prima di questa versione (con il solo riepilogo) restano validi e leggibili.
+- Non vengono registrati i login (non sono modifiche). Le versioni complete restano anche nella storia git di `rapporti.json`.
 
 Test: `npm test` (GitHub simulato in memoria, nessuna rete).

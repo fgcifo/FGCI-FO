@@ -28,6 +28,63 @@
     return righe.join("");
   }
 
+  const NOMI_OP = { modificato: "Modificato", aggiunto: "Aggiunto", rimosso: "Rimosso", spostato: "Spostato" };
+  const CAMPI_TESTO = ["titolo", "testo", "fonte", "url", "didascalia"];
+
+  // Testo leggibile di un campo o di un blocco del corpo.
+  function testoBlocco(x) {
+    if (x == null) return "";
+    if (typeof x === "string") return x;
+    if (Array.isArray(x)) return x.map(testoBlocco).join(", ");
+    if (x.tipo === "separatore") return "— separatore —";
+    return CAMPI_TESTO.map(k => x[k]).filter(Boolean).join("\n");
+  }
+
+  // Differenza parola per parola: [{t:"=" | "-" | "+", s}]
+  function diffParole(da, a) {
+    const A = da.split(/(\s+)/).filter(Boolean), B = a.split(/(\s+)/).filter(Boolean);
+    if (A.length * B.length > 2.5e6) return [{ t: "-", s: da }, { t: "+", s: a }];
+    const dp = Array.from({ length: A.length + 1 }, () => new Uint32Array(B.length + 1));
+    for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--)
+      dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const out = [], metti = (t, s) => { if (out.length && out[out.length - 1].t === t) out[out.length - 1].s += s; else out.push({ t, s }); };
+    let i = 0, j = 0;
+    while (i < A.length && j < B.length) {
+      if (A[i] === B[j]) { metti("=", A[i]); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) metti("-", A[i++]);
+      else metti("+", B[j++]);
+    }
+    while (i < A.length) metti("-", A[i++]);
+    while (j < B.length) metti("+", B[j++]);
+    return out;
+  }
+
+  const htmlDiff = (da, a) => diffParole(da, a).map(p => p.t === "=" ? esc(p.s) : p.t === "-" ? `<del>${esc(p.s)}</del>` : `<ins>${esc(p.s)}</ins>`).join("");
+
+  function htmlModifica(m) {
+    const da = testoBlocco(m.da), a = testoBlocco(m.a);
+    let corpo = "";
+    if (m.op === "modificato") corpo = da === a ? `<em>Cambiate le impostazioni del blocco (il testo è uguale).</em>` : `<div class="registro-diff">${htmlDiff(da, a)}</div>`;
+    else if (m.op === "aggiunto") corpo = `<div class="registro-diff"><ins>${esc(a)}</ins></div>`;
+    else if (m.op === "rimosso") corpo = `<div class="registro-diff"><del>${esc(da)}</del></div>`;
+    else if (m.op === "spostato") corpo = `<em>Spostato dalla posizione ${m.posizioneDa} alla ${m.posizione}.</em><div class="registro-diff">${esc(a)}</div>`;
+    return `<li class="registro-mod registro-mod--${esc(m.op)}"><span class="registro-mod__op">${esc(NOMI_OP[m.op] || m.op)}</span> <span class="registro-mod__dove">${esc(m.dove)}</span>${corpo}</li>`;
+  }
+
+  function htmlModifiche(b) {
+    if (!Array.isArray(b.modifiche) || !b.modifiche.length) return "";
+    return `<ul class="registro-mods">${b.modifiche.map(htmlModifica).join("")}</ul>`;
+  }
+
+  // Documento intero conservato nei blocchi di creazione ed eliminazione.
+  function htmlContenuto(b) {
+    const c = b.contenuto;
+    if (!c) return "";
+    const righe = [c.titolo, c.sottotitolo].filter(Boolean).map(t => `<strong>${esc(t)}</strong>`)
+      .concat((c.corpo || []).map(x => `[${esc(x.tipo)}] ${esc(testoBlocco(x))}`));
+    return `<details class="registro-dettagli"><summary>Contenuto registrato (${(c.corpo || []).length} blocchi)</summary><div class="registro-diff">${righe.join("\n\n")}</div></details>`;
+  }
+
   function dettagli(b) {
     const righe = [];
     if (b.campiModificati && b.campiModificati.length) righe.push(`<li>Campi: ${b.campiModificati.map(esc).join(", ")}</li>`);
@@ -51,6 +108,7 @@
       </div>
       <p class="registro-meta">${esc(b.utente)} · ${dataOra(b.timestamp)}</p>
       <p>${esc(b.riepilogo || "")}</p>
+      ${htmlModifiche(b)}${htmlContenuto(b)}
       ${dettagli(b)}
     </article>`;
   }
